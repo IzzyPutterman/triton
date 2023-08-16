@@ -4,6 +4,8 @@ import subprocess
 import sys
 from contextlib import contextmanager
 
+from cuda import cudart
+
 from . import language as tl
 from ._C.libtriton.triton import runtime
 
@@ -101,9 +103,10 @@ def do_bench(fn, warmup=25, rep=100, grad_to_none=None,
     :param fast_flush: Use faster kernel to flush L2 between measurements
     :type fast_flush: bool
     """
-
+    stream = 0
     fn()
-    torch.cuda.synchronize()
+    cudart.cudaDeviceSynchronize()
+    # torch.cuda.synchronize()
 
     # We maintain a buffer of 256 MB that we clear
     # before each kernel call to make sure that the L2
@@ -114,21 +117,33 @@ def do_bench(fn, warmup=25, rep=100, grad_to_none=None,
         cache = torch.empty(int(256e6), dtype=torch.int8, device='cuda')
 
     # Estimate the runtime of the function
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
-    start_event.record()
+    _, start_event = cudart.cudaEventCreate()
+    _, end_event = cudart.cudaEventCreate()
+    # start_event = torch.cuda.Event(enable_timing=True)
+    # end_event = torch.cuda.Event(enable_timing=True)
+    cudart.cudaEventRecord(start_event, stream)
+    # start_event.record()
     for _ in range(5):
         cache.zero_()
         fn()
-    end_event.record()
-    torch.cuda.synchronize()
-    estimate_ms = start_event.elapsed_time(end_event) / 5
+    cudart.cudaEventRecord(end_event, stream)
+    # end_event.record()
+    cudart.cudaDeviceSynchronize()
+    # torch.cuda.synchronize()
+    estimate_ms = cudart.cudaEventElapsedTime(start_event, end_event)[1] / 5
+    # estimate_ms = start_event.elapsed_time(end_event) / 5
 
     # compute number of warmup and repeat
     n_warmup = max(1, int(warmup / estimate_ms))
     n_repeat = max(1, int(rep / estimate_ms))
-    start_event = [torch.cuda.Event(enable_timing=True) for i in range(n_repeat)]
-    end_event = [torch.cuda.Event(enable_timing=True) for i in range(n_repeat)]
+    start_event = [
+        cudart.cudaEventCreate()[1] for i in range(n_repeat)
+    ]
+    end_event = [cudart.cudaEventCreate()[1] for i in range(n_repeat)]
+    # start_event = [
+    #     torch.cuda.Event(enable_timing=True) for i in range(n_repeat)
+    # ]
+    # end_event = [torch.cuda.Event(enable_timing=True) for i in range(n_repeat)]
     # Warm-up
     for _ in range(n_warmup):
         fn()
@@ -143,12 +158,20 @@ def do_bench(fn, warmup=25, rep=100, grad_to_none=None,
         # we clear the L2 cache before each run
         cache.zero_()
         # record time of `fn`
-        start_event[i].record()
+        cudart.cudaEventRecord(start_event[i], stream)
+        # start_event[i].record()
         fn()
-        end_event[i].record()
+        cudart.cudaEventRecord(end_event[i], stream)
+        # end_event[i].record()
     # Record clocks
-    torch.cuda.synchronize()
-    times = torch.tensor([s.elapsed_time(e) for s, e in zip(start_event, end_event)], dtype=torch.float)
+    cudart.cudaDeviceSynchronize()
+    # torch.cuda.synchronize()
+    times = torch.tensor(
+        [cudart.cudaEventElapsedTime(s, e)[1] for s, e in zip(start_event, end_event)]
+    )
+    # times = torch.tensor(
+    #     [s.elapsed_time(e) for s, e in zip(start_event, end_event)]
+    # )
     if quantiles is not None:
         ret = torch.quantile(times, torch.tensor(quantiles, dtype=torch.float)).tolist()
         if len(ret) == 1:

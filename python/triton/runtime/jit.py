@@ -11,6 +11,8 @@ from collections import defaultdict, namedtuple
 from typing import (Callable, Generic, Iterable, List, Optional, TypeVar, Union, cast,
                     overload)
 
+from cuda import cudart
+
 from .._C.libtriton.triton import TMAInfos
 from ..common.backend import get_backend, path_to_ptxas
 
@@ -21,27 +23,32 @@ TRITON_VERSION = "2.1.0"
 def get_cuda_stream(idx=None):
     if idx is None:
         idx = get_current_device()
-    try:
-        from torch._C import _cuda_getCurrentRawStream
-        return _cuda_getCurrentRawStream(idx)
-    except ImportError:
-        import torch
-        return torch.cuda.current_stream(idx).cuda_stream
+    # try:
+    #     from torch._C import _cuda_getCurrentRawStream
+    #     return _cuda_getCurrentRawStream(idx)
+    # except ImportError:
+    #     import torch
+    #     return torch.cuda.current_stream(idx).cuda_stream
+    return 0  # TODO, wrong but default to 0
 
 
 def get_current_device():
-    import torch
-    return torch.cuda.current_device()
+    return cudart.cudaGetDevice()[1]
+    # import torch
+    # return torch.cuda.current_device()
 
 
 def set_current_device(idx):
-    import torch
-    torch.cuda.set_device(idx)
+    cudart.cudaSetDevice(idx)
+    # import torch
+    # torch.cuda.set_device(idx)
 
 
 def get_device_capability(idx):
-    import torch
-    return torch.cuda.get_device_capability(idx)
+    _, x = cudart.cudaGetDeviceProperties(0)
+    return (x.major, x.minor)
+    # import torch
+    # return torch.cuda.get_device_capability(idx)
 
 
 T = TypeVar('T')
